@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Текст->Цвета</title>
+    <style>
+        body {
+            font-family: system-ui, sans-serif;
+            background: #1a1a1a;
+            color: #eee;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+        }
+        .container {
+            max-width: 800px;
+            width: 100%;
+        }
+        textarea {
+            width: 100%;
+            height: 150px;
+            background: #2a2a2a;
+            color: #fff;
+            border: 1px solid #555;
+            border-radius: 6px;
+            padding: 10px;
+            font-size: 16px;
+            resize: vertical;
+            margin-bottom: 10px;
+        }
+        .controls {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .controls label {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        input[type="number"] {
+            width: 60px;
+            background: #2a2a2a;
+            color: #fff;
+            border: 1px solid #555;
+            border-radius: 4px;
+            padding: 4px;
+        }
+        button {
+            background: #4f46e5;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        button:hover {
+            background: #4338ca;
+        }
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .canvas-wrapper {
+            background: #000;
+            border-radius: 8px;
+            overflow: auto;
+            max-height: 500px;
+            margin: 10px 0;
+            display: flex;
+            justify-content: center;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+            max-width: 100%;
+            height: auto;
+        }
+        .status {
+            font-size: 14px;
+            color: #aaa;
+            margin-top: 4px;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>Превратить текст в набор цветов</h1>
+    <p>Каждый символ Юникода — свой цвет. Вставьте текст и получите "цветовой ковёр".</p>
+
+    <textarea id="textInput" placeholder="Введите текст (например, стихи Пушкина)">Я помню чудное мгновенье:
+Передо мной явилась ты,
+Как мимолетное виденье,
+Как гений чистой красоты.</textarea>
+
+    <div class="controls">
+        <label>Ширина (символов в строке):
+            <input type="number" id="widthInput" value="30" min="1" max="5000">
+        </label>
+        <button id="generateBtn">🎨 Визуализировать</button>
+        <button id="downloadImgBtn">📷 Скачать PNG</button>
+        <button id="recordBtn">🎥 Записать видео</button>
+        <label style="margin-left: 10px;">Скорость (симв./сек):
+            <input type="number" id="speedInput" value="20" min="1" max="100" style="width:60px;">
+        </label>
+        <button id="stopRecordBtn" disabled>⏹️ Стоп</button>
+    </div>
+
+    <div class="canvas-wrapper">
+        <canvas id="colorCanvas"></canvas>
+    </div>
+    <div class="status" id="status"></div>
+</div>
+
+<script>
+    (function() {
+        const textInput = document.getElementById('textInput');
+        const widthInput = document.getElementById('widthInput');
+        const generateBtn = document.getElementById('generateBtn');
+        const downloadImgBtn = document.getElementById('downloadImgBtn');
+        const recordBtn = document.getElementById('recordBtn');
+        const stopRecordBtn = document.getElementById('stopRecordBtn');
+        const speedInput = document.getElementById('speedInput');
+        const canvas = document.getElementById('colorCanvas');
+        const ctx = canvas.getContext('2d');
+        const statusDiv = document.getElementById('status');
+
+        let currentText = '';
+        let cols = 30;
+        let mediaRecorder = null;
+        let recordedChunks = [];
+        let animationId = null;
+        let animationStart = null;
+        let totalSymbols = 0;
+
+        // Функция: символ → цвет HSL
+        function charToColor(char) {
+            const code = char.codePointAt(0);
+            // Хеш для оттенка (0-360)
+            const hue = (code * 37 + code * 13) % 360;
+            // Насыщенность 70-100%, светлота 50-70%
+            const saturation = 70 + (code % 30);
+            const lightness = 50 + (code % 20);
+            return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+        }
+
+        // Отрисовка цветной сетки из всего текста сразу
+        function drawFullGrid(text, columns) {
+            if (!text) {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                return;
+            }
+
+            const cellSize = 16; // пикселей на символ
+            const rows = Math.ceil(text.length / columns);
+            canvas.width = columns * cellSize;
+            canvas.height = rows * cellSize;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            for (let i = 0; i < text.length; i++) {
+                const row = Math.floor(i / columns);
+                const col = i % columns;
+                const color = charToColor(text[i]);
+                ctx.fillStyle = color;
+                ctx.fillRect(col * cellSize, row * cellSize, cellSize, cellSize);
+            }
+        }
+
+        // Обновить визуализацию при нажатии кнопки
+        function updateVisualization() {
+            currentText = textInput.value;
+            cols = parseInt(widthInput.value, 10) || 30;
+            if (cols < 1) cols = 1;
+            drawFullGrid(currentText, cols);
+            statusDiv.textContent = `Символов: ${currentText.length} | Размер холста: ${canvas.width}x${canvas.height}`;
+        }
+
+        // Скачать как PNG
+        function downloadPNG() {
+            if (!currentText) {
+                alert('Сначала визуализируйте текст.');
+                return;
+            }
+            const link = document.createElement('a');
+            link.download = 'text-colors.png';
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+        }
+
+        // Остановка записи/анимации
+        function stopRecording() {
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                mediaRecorder.stop();
+            }
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+                animationId = null;
+            }
+            recordBtn.disabled = false;
+            stopRecordBtn.disabled = true;
+            statusDiv.textContent = 'Запись остановлена.';
+        }
+
+        // Запись видео с анимацией появления символов
+        function startRecording() {
+            if (!currentText) {
+                alert('Сначала визуализируйте текст.');
+                return;
+            }
+
+            // Останавливаем предыдущую запись, если есть
+            stopRecording();
+
+            const speed = parseInt(speedInput.value, 10) || 20; // символов в секунду
+            const frameRate = 30; // кадров в секунду
+            const cellSize = 16;
+            const text = currentText;
+            const columns = cols;
+            totalSymbols = text.length;
+            const rows = Math.ceil(totalSymbols / columns);
+            canvas.width = columns * cellSize;
+            canvas.height = rows * cellSize;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Поток с canvas
+            const stream = canvas.captureStream(frameRate);
+            recordedChunks = [];
+            mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+
+            mediaRecorder.ondataavailable = (e) => {
+                if (e.data.size > 0) recordedChunks.push(e.data);
+            };
+
+            mediaRecorder.onstop = () => {
+                const blob = new Blob(recordedChunks, { type: 'video/webm' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'text-colors.webm';
+                a.click();
+                URL.revokeObjectURL(url);
+                recordedChunks = [];
+                mediaRecorder = null;
+                recordBtn.disabled = false;
+                stopRecordBtn.disabled = true;
+                statusDiv.textContent = 'Видео сохранено.';
+                // Перерисовать полную картинку после окончания
+                drawFullGrid(text, columns);
+            };
+
+            mediaRecorder.start();
+            recordBtn.disabled = true;
+            stopRecordBtn.disabled = false;
+            statusDiv.textContent = 'Идёт запись видео...';
+
+            animationStart = performance.now();
+            const totalDuration = (totalSymbols / speed) * 1000; // в миллисекундах
+
+            function animate(now) {
+                const elapsed = now - animationStart;
+                const symbolsToShow = Math.min(totalSymbols, Math.floor((elapsed / 1000) * speed));
+
+                // Рисуем только нужное количество символов
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                for (let i = 0; i < symbolsToShow; i++) {
+                    const row = Math.floor(i / columns);
+                    const col = i % columns;
+                    const color = charToColor(text[i]);
+                    ctx.fillStyle = color;
+                    ctx.fillRect(col * cellSize, row * cellSize, cellSize, cellSize);
+                }
+
+                // Обновляем статус
+                statusDiv.textContent = `Запись... ${symbolsToShow}/${totalSymbols} символов`;
+
+                if (symbolsToShow < totalSymbols) {
+                    animationId = requestAnimationFrame(animate);
+                } else {
+                    // Все символы показаны, останавливаем запись через небольшую задержку
+                    animationId = null;
+                    setTimeout(() => {
+                        if (mediaRecorder && mediaRecorder.state === 'recording') {
+                            mediaRecorder.stop();
+                        }
+                    }, 500); // полсекунды финального кадра
+                }
+            }
+
+            animationId = requestAnimationFrame(animate);
+        }
+
+        // Обработчики событий
+        generateBtn.addEventListener('click', updateVisualization);
+        downloadImgBtn.addEventListener('click', downloadPNG);
+        recordBtn.addEventListener('click', startRecording);
+        stopRecordBtn.addEventListener('click', stopRecording);
+
+        // При загрузке сразу показать пример
+        window.addEventListener('load', () => {
+            updateVisualization();
+        });
+    })();
+</script>
+</body>
+</html>
